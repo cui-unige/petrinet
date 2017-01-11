@@ -33,7 +33,7 @@ for _, what in ipairs { "petrinet" --[[, "petrinet.struct" ]] } do
       local start   = Gettime ()
       local _, size = pn.reachable (pn.initial)
       print (Gettime () - start)
-      assert (size == 2)
+      assert (size == 2, size)
     end)
 
     it ("loads models", function ()
@@ -42,11 +42,20 @@ for _, what in ipairs { "petrinet" --[[, "petrinet.struct" ]] } do
       local start   = Gettime ()
       local _, size = pn.reachable (pn.initial)
       print (Gettime () - start)
-      assert (size == 6144)
+      assert (size == 6144, size)
+    end)
+
+    it ("loads models", function ()
+      local model   = Pnml ("models/G-PPP-1-1.pnml")
+      local pn      = Petrinet (model)
+      local start   = Gettime ()
+      local _, size = pn.reachable (pn.initial)
+      print (Gettime () - start)
+      assert (size == 10380, size)
     end)
 
     it ("works also with #Philosophers", function ()
-      local n    = 13
+      local n    = 10
       local data = {}
       for i = 1, n do
         local id = tostring (i)
@@ -111,7 +120,7 @@ for _, what in ipairs { "petrinet" --[[, "petrinet.struct" ]] } do
       -- profi:stop()
       -- profi:writeReport ("report.txt")
       print (size)
-      assert (size == 6726)
+      assert (size == 6726, size)
     end)
 
   end)
