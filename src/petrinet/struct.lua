@@ -1,6 +1,7 @@
-local Et  = require "etlua"
-local Bit = require "bit"
-local Ffi = require "ffi"
+local Et     = require "etlua"
+local Bit    = require "bit"
+local Ffi    = require "ffi"
+local Primes = require "primes"
 
 local pnid = 0
 
@@ -11,45 +12,67 @@ return function (petrinet)
   local Marking    = setmetatable ({}, Marking_mt)
   Marking.__index  = Marking
 
-  local sorted_places      = {}
-  local sorted_transitions = {}
+  local names       = {}
+  local places      = {}
+  local transitions = {}
   for name, x in pairs (petrinet) do
     if type (x) == "table" and x.type == "place" then
       x.name    = name
+      x.id      = #places+1
       x.initial = x.initial or 0
       x.bound   = x.bound   or 0
-      sorted_places [#sorted_places+1] = x
-    elseif type (x) == "table" and x.type == "transition" then
-      x.name = name
-      sorted_transitions [#sorted_transitions+1] = x
+      places [x.id  ] = x
+      names  [x.name] = x
     end
   end
-  table.sort (sorted_places     , function (l, r) return l.name < r.name end)
-  table.sort (sorted_transitions, function (l, r) return l.name < r.name end)
+  for name, x in pairs (petrinet) do
+    if type (x) == "table" and x.type == "transition" then
+      x.name = name
+      local pre  = setmetatable ({}, { __index = function () return 0 end })
+      local post = setmetatable ({}, { __index = function () return 0 end })
+      for k, v in pairs (x.pre  or {}) do
+        pre  [names [k]] = v
+      end
+      for k, v in pairs (x.post or {}) do
+        post [names [k]] = v
+      end
+      x.pre  = pre
+      x.post = post
+      transitions [#transitions+1] = x
+    end
+  end
+  table.sort (places     , function (l, r) return l.id   < r.id   end)
+  table.sort (transitions, function (l, r) return l.name < r.name end)
+  for _, place in ipairs (places) do
+    place.prime = Primes [place.id * math.ceil (#Primes / (#places+1))]
+  end
 
   local unicity = {
     id = 0,
   }
 
   local environment = {
-    Marking            = Marking,
-    Bit                = Bit,
-    petrinet           = petrinet,
-    sorted_places      = sorted_places,
-    sorted_transitions = sorted_transitions,
-    unicity            = unicity,
-    getmetatable       = getmetatable,
-    setmetatable       = setmetatable,
-    require            = require,
-    print              = print,
-    tostring           = tostring,
-    pnid               = pnid,
+    Marking      = Marking,
+    Bit          = Bit,
+    Ffi          = Ffi,
+    petrinet     = petrinet,
+    places       = places,
+    transitions  = transitions,
+    unicity      = unicity,
+    getmetatable = getmetatable,
+    setmetatable = setmetatable,
+    require      = require,
+    ipairs       = ipairs,
+    pairs        = pairs,
+    print        = print,
+    tostring     = tostring,
+    pnid         = pnid,
   }
 
   Ffi.cdef (Et.render ([[
     typedef struct {
       unsigned long long __id;
-      <% for i in ipairs (sorted_places) do %>
+      <% for i in ipairs (places) do %>
         unsigned char place_<%- i %>;
       <% end %>
     } marking_<%- pnid %>_t;
@@ -60,20 +83,21 @@ return function (petrinet)
     local code = Et.render ([[
       function Marking.unique (marking)
         local hash = 0
-        <% for i, place in ipairs (sorted_places) do %>
-          hash = Bit.bxor (hash, <%- i %> * marking.place_<%- i %> * 2654435761)
+        <% for i, place in ipairs (places) do %>
+        marking.place_<%- i %> = marking.place_<%- i %> or 0
+        hash = Bit.bxor (hash, marking.place_<%- i %> * <%- place.prime %>)
         <% end %>
         local bucket = unicity [hash]
         if not bucket then
-          bucket         = {}
+          bucket         = setmetatable ({}, { __mode = "k" })
           unicity [hash] = bucket
         end
-        for i = 1, #bucket do
-          if Marking.__deepeq (bucket [i], marking) then
-            return bucket [i]
+        for m in pairs (bucket) do
+          if Marking.__deepeq (m, marking) then
+            return m
           end
         end
-        bucket [#bucket+1] = marking
+        bucket [marking] = true
         marking.__id = unicity.id
         unicity.id   = unicity.id + 1
         return marking
@@ -86,12 +110,8 @@ return function (petrinet)
     local code = Et.render ([[
       local Ffi = require "ffi"
       local Mt  = getmetatable (Marking)
-      function Mt.__call (_, t)
-        local result = Ffi.new "marking_<%- pnid %>_t"
-        <% for i, place in ipairs (sorted_places) do %>
-          result.place_<%- i %> = t ["<%- place.name %>"] or 0
-        <% end %>
-        return Marking.unique (result)
+      function Mt.__call (_, marking)
+        return Marking.unique (Marking.named (marking))
       end
     ]], environment)
     load (code, "Marking_mt.__call", "t", environment) ()
@@ -110,8 +130,8 @@ return function (petrinet)
     local code = Et.render ([[
       function Marking.__deepeq (lhs, rhs)
         return true
-        <% for i in ipairs (sorted_places) do %>
-           and (lhs.place_<%- i %> or 0) == (rhs.place_<%- i %> or 0)
+        <% for i in ipairs (places) do %>
+           and lhs.place_<%- i %> == rhs.place_<%- i %>
         <% end %>
       end
     ]], environment)
@@ -122,8 +142,8 @@ return function (petrinet)
     local code = Et.render ([[
       function Marking.__le (lhs, rhs)
         return true
-        <% for i in ipairs (sorted_places) do %>
-           and (lhs.place_<%- i %> or 0) <= (rhs.place_<%- i %> or 0)
+        <% for i in ipairs (places) do %>
+           and lhs.place_<%- i %> <= rhs.place_<%- i %>
         <% end %>
       end
     ]], environment)
@@ -133,11 +153,11 @@ return function (petrinet)
   do
     local code = Et.render ([[
       function Marking.__add (lhs, rhs)
-        return Marking {
-          <% for i, place in ipairs (sorted_places) do %>
-            ["<%- place.name %>"] = (lhs.place_<%- i %> or 0) + (rhs.place_<%- i %> or 0),
-          <% end %>
-        }
+        local result = Ffi.new "marking_<%- pnid %>_t"
+        <% for i, place in ipairs (places) do %>
+        result.place_<%- i %> = lhs.place_<%- i %> + rhs.place_<%- i %>
+        <% end %>
+        return Marking.unique (result)
       end
     ]], environment)
     load (code, "Marking.__add", "t", environment) ()
@@ -146,11 +166,11 @@ return function (petrinet)
   do
     local code = Et.render ([[
       function Marking.__sub (lhs, rhs)
-        return Marking {
-          <% for i, place in ipairs (sorted_places) do %>
-            ["<%- place.name %>"] = (lhs.place_<%- i %> or 0) - (rhs.place_<%- i %> or 0),
-          <% end %>
-        }
+        local result = Ffi.new "marking_<%- pnid %>_t"
+        <% for i, place in ipairs (places) do %>
+        result.place_<%- i %> = lhs.place_<%- i %> - rhs.place_<%- i %>
+        <% end %>
+        return Marking.unique (result)
       end
     ]], environment)
     load (code, "Marking.__sub", "t", environment) ()
@@ -161,7 +181,7 @@ return function (petrinet)
       function Marking.__tostring (marking)
         return tostring (marking.__id)
             .. "@{"
-              <% for i, place in ipairs (sorted_places) do %>
+              <% for i, place in ipairs (places) do %>
             .. " <%- place.name %>=" .. tostring (marking.place_<%- i %>)
               <% end %>
             .. " }"
@@ -172,9 +192,22 @@ return function (petrinet)
 
   do
     local code = Et.render ([[
-      Marking.initial = Marking {
-        <% for _, place in ipairs (sorted_places) do %>
-          ["<%- place.name %>"] = <%- place.initial %>,
+      Marking.named = function (t)
+        local result = Ffi.new "marking_<%- pnid %>_t"
+        <% for i, place in ipairs (places) do %>
+        result.place_<%- i %> = t ["<%- place.name %>"] or 0
+        <% end %>
+        return Marking.unique (result)
+      end
+    ]], environment)
+    load (code, "Marking.named", "t", environment) ()
+  end
+
+  do
+    local code = Et.render ([[
+      Marking.initial = Marking.named {
+        <% for i, place in ipairs (places) do %>
+        ["<%- place.name %>"] = <%- place.initial %> or 0,
         <% end %>
       }
     ]], environment)
@@ -183,40 +216,32 @@ return function (petrinet)
 
   do
     local code = Et.render ([[
-      Marking.empty = Marking {
-        <% for _, place in ipairs (sorted_places) do %>
-          ["<%- place.name %>"] = 0,
-        <% end %>
-      }
+      local result = Ffi.new "marking_<%- pnid %>_t"
+      Marking.empty = Marking.named {}
     ]], environment)
     load (code, "Marking.empty", "t", environment) ()
   end
 
   do
     local code = Et.render ([[
-      <% for i, transition in ipairs (sorted_transitions) do %>
-        do
-          local pre  = Marking {
+      <% for i, transition in ipairs (transitions) do %>
+        Marking ["<%- transition.name %>"] = function (marking)
+          if false
             <% for place, value in pairs (transition.pre) do %>
-              ["<%- place %>"] = <%- value %>,
+          or marking.place_<%- place.id %> < <%- value %>
             <% end %>
-          }
-          local post = Marking {
-            <% for place, value in pairs (transition.post) do %>
-              ["<%- place %>"] = <%- value %>,
-            <% end %>
-          }
-          Marking ["<%- transition.name %>"] = function (marking)
-            if marking >= pre then
-              return marking - pre + post
-            else
-              return nil
-            end
+          then
+            return nil
           end
+          local result = Ffi.new "marking_<%- pnid %>_t"
+          <% for _, place in ipairs (places) do %>
+          result.place_<%- place.id %> = marking.place_<%- place.id %> - <%- transition.pre [place] %> + <%- transition.post [place] %>
+          <% end %>
+          return Marking.unique (result)
         end
-        setmetatable (sorted_transitions [<%- i %>], {
+        setmetatable (transitions [<%- i %>], {
           __call = function (_, marking)
-            return marking ["<%- transition.name %>"] (marking)
+            return Marking ["<%- transition.name %>"] (marking)
           end,
         })
       <% end %>
@@ -234,11 +259,11 @@ return function (petrinet)
       encountered [marking] = nil
       if not explored [marking] then
         explored [marking] = true
-        for _, transition in ipairs (sorted_transitions) do
+        for _, transition in ipairs (transitions) do
           local successor = transition (marking)
           if successor then
             -- marking     [transition] = successor
-            encountered [successor ] = true
+            encountered [successor] = true
           end
         end
        end
@@ -247,11 +272,20 @@ return function (petrinet)
     for _ in pairs (explored) do
       size = size + 1
     end
+    local count = 0
+    for _, v in pairs (unicity) do
+      if type (v) == "table" then
+        for _ in pairs (v) do
+          count = count + 1
+        end
+      end
+    end
+    print ("count:", count)
     return explored, size
   end
 
   return {
-    marking   = Marking,
+    marking   = Marking.named,
     initial   = Marking.initial,
     empty     = Marking.empty,
     reachable = reachable,

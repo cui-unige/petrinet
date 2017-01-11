@@ -1,6 +1,7 @@
-local Pnml     = require "pnml"
+local Pnml    = require "pnml"
+local Gettime = require "socket".gettime
 
-for _, what in ipairs { "petrinet", "petrinet.struct" } do
+for _, what in ipairs { "petrinet" --[[, "petrinet.struct" ]] } do
   local Petrinet = require (what)
 
   describe ("#" .. what, function ()
@@ -29,19 +30,23 @@ for _, what in ipairs { "petrinet", "petrinet.struct" } do
       assert (pn.initial - pn.empty   == pn.initial)
       assert (pn.initial + pn.initial == pn.marking { p1 = 2 })
       assert (pn.initial:t ()         == pn.marking { p2 = 1 })
+      local start   = Gettime ()
       local _, size = pn.reachable (pn.initial)
+      print (Gettime () - start)
       assert (size == 2)
     end)
 
     it ("loads models", function ()
-      local model = Pnml ("models/dekker-10.pnml")
-      local pn    = Petrinet (model)
+      local model   = Pnml ("models/dekker-10.pnml")
+      local pn      = Petrinet (model)
+      local start   = Gettime ()
       local _, size = pn.reachable (pn.initial)
+      print (Gettime () - start)
       assert (size == 6144)
     end)
 
-    it ("works also with Philosophers", function ()
-      local n    = 10
+    it ("works also with #Philosophers", function ()
+      local n    = 13
       local data = {}
       for i = 1, n do
         local id = tostring (i)
@@ -100,9 +105,12 @@ for _, what in ipairs { "petrinet", "petrinet.struct" } do
       local pn    = Petrinet (data)
       -- local profi = require 'profi'
       -- profi:start()
+      local start = Gettime ()
       local _, size = pn.reachable (pn.initial)
+      print (Gettime () - start)
       -- profi:stop()
       -- profi:writeReport ("report.txt")
+      print (size)
       assert (size == 6726)
     end)
 
