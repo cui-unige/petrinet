@@ -1,7 +1,34 @@
-local Pnml    = require "pnml"
-local Gettime = require "socket".gettime
+local Pnml = require "petrinet.pnml"
+local Yaml = require "yaml"
 
-for _, what in ipairs { "petrinet" --[[, "petrinet.struct" ]] } do
+local function show (pn)
+  local result = pn.analysis ()
+  local ps = {}
+  local ts = {}
+  for _, place in ipairs (pn.places) do
+    ps [place.name] = {
+      initial = place.initial,
+      bound   = place.bound,
+    }
+  end
+  for _, transition in ipairs (pn.transitions) do
+    ts [transition.name] = transition.liveness
+  end
+  print (Yaml.dump {
+    durations = {
+      reachability = result.reachability.duration,
+      bound        = result.bound.duration,
+      liveness     = result.liveness.duration,
+    },
+    markings = {
+      size = result.reachability.size,
+    },
+    bound    = ps,
+    liveness = ts,
+  })
+end
+
+for _, what in ipairs { "petrinet" --[[, "petrinet.struct"]] } do
   local Petrinet = require (what)
 
   describe ("#" .. what, function ()
@@ -30,28 +57,22 @@ for _, what in ipairs { "petrinet" --[[, "petrinet.struct" ]] } do
       assert (pn.initial - pn.empty   == pn.initial)
       assert (pn.initial + pn.initial == pn.marking { p1 = 2 })
       assert (pn.initial:t ()         == pn.marking { p2 = 1 })
-      local start   = Gettime ()
-      local _, size = pn.reachable (pn.initial)
-      print (Gettime () - start)
-      assert (size == 2, size)
+      local result = pn.analysis ()
+      assert (result.reachability.size == 2, result.reachability.size)
     end)
 
     it ("loads models", function ()
-      local model   = Pnml ("models/dekker-10.pnml")
-      local pn      = Petrinet (model)
-      local start   = Gettime ()
-      local _, size = pn.reachable (pn.initial)
-      print (Gettime () - start)
-      assert (size == 6144, size)
+      local model  = Pnml "models/dekker-10.pnml"
+      local pn     = Petrinet (model)
+      local result = pn.analysis ()
+      assert (result.reachability.size == 6144, result.reachability.size)
     end)
 
     it ("loads models", function ()
-      local model   = Pnml ("models/G-PPP-1-1.pnml")
-      local pn      = Petrinet (model)
-      local start   = Gettime ()
-      local _, size = pn.reachable (pn.initial)
-      print (Gettime () - start)
-      assert (size == 10380, size)
+      local model  = Pnml "models/G-PPP-1-1.pnml"
+      local pn     = Petrinet (model)
+      local result = pn.analysis ()
+      assert (result.reachability.size == 10380, result.reachability.size)
     end)
 
     it ("works also with #Philosophers", function ()
@@ -111,16 +132,46 @@ for _, what in ipairs { "petrinet" --[[, "petrinet.struct" ]] } do
           },
         }
       end
-      local pn    = Petrinet (data)
       -- local profi = require 'profi'
       -- profi:start()
-      local start = Gettime ()
-      local _, size = pn.reachable (pn.initial)
-      print (Gettime () - start)
+      local pn     = Petrinet (data)
+      local result = pn.analysis ()
       -- profi:stop()
       -- profi:writeReport ("report.txt")
-      print (size)
-      assert (size == 6726, size)
+      assert (result.reachability.size == 6726, result.reachability.size)
+    end)
+
+    it ("can analyze liveness", function ()
+      local pn = Petrinet {
+        p1 = {
+          type = "place",
+          initial = 1,
+        },
+        p2 = {
+          type = "place",
+          initial = 0,
+        },
+        t1 = {
+          type = "transition",
+          pre = {
+            p1 = 1,
+          },
+          post = {
+            p2 = 1,
+          },
+        },
+        t2 = {
+          type = "transition",
+          pre = {
+            p2 = 1,
+          },
+          post = {
+            p1 = 1,
+          },
+        },
+      }
+      local result = pn.analysis ()
+      assert (result.reachability.size == 2, result.reachability.size)
     end)
 
   end)
